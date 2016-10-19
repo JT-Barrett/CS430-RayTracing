@@ -29,15 +29,15 @@ int main(int argc, char* argv[]){
   
   int width = atoi(argv[1]);
   int height = atoi(argv[2]);
-  if (width > 300 || height > 300){
-    fprintf(stderr, "Error: This program cannot handle images that large.\n");
-    return 1;
-  }
-  int pixbuffer[width*height*3];
+  //if (width > 300 || height > 300){
+   // fprintf(stderr, "Error: This program cannot handle images that large.\n");
+   // return 1;
+  //}
+  Pixel pixbuffer[width*height];
   raycast(pixbuffer, scene, num_objects, width, height);
 
   //Take the pixel buffer and write it as a valid ppm file.
-  ppm_output(pixbuffer, argv[4], sizeof(int)*(width*height*3), 255, width, height);
+  ppm_output(pixbuffer, argv[4], sizeof(Pixel)*(width*height), 255, width, height);
 
     //printf("\nNumber of Objects: %d\n", num_objects);
 
@@ -110,6 +110,10 @@ int read_scene(char* json_input, Scene scene){
         scene[obj_num].kind = 2;
         //printf("||Plane Recognized||\n");
       }
+      else if (strcmp(value, "light") == 0) {
+        scene[obj_num].kind = 4;
+        //printf("||Plane Recognized||\n");
+      }
       else {
         fprintf(stderr, "Error: Unknown type, \"%s\"\n", value);
         exit(1);
@@ -148,10 +152,14 @@ int read_scene(char* json_input, Scene scene){
             }
           }
           else if (scene[obj_num].kind == 1){
-            if (strcmp(key, "color") == 0){
+            if (strcmp(key, "diffuse_color") == 0){
               double* value = next_vector(json);
-              memcpy(&scene[obj_num].color, value, sizeof(double)*3);
+              memcpy(&scene[obj_num].diffuse_color, value, sizeof(double)*3);
             }
+            else if (strcmp(key, "specular_color") == 0){
+              double* value = next_vector(json);
+              memcpy(&scene[obj_num].specular_color, value, sizeof(double)*3);
+            }            
             else if (strcmp(key, "radius") == 0)
               scene[obj_num].sphere.radius = next_number(json);
             else if (strcmp(key, "position") == 0){
@@ -168,9 +176,13 @@ int read_scene(char* json_input, Scene scene){
               scene[obj_num].plane.width = next_number(json);
             else if (strcmp(key, "height") == 0)
               scene[obj_num].plane.height = next_number(json);
-            else if (strcmp(key, "color") == 0){
+            else if (strcmp(key, "diffuse_color") == 0){
               double* value = next_vector(json);
-              memcpy(&scene[obj_num].color, value, sizeof(double)*3);
+              memcpy(&scene[obj_num].diffuse_color, value, sizeof(double)*3);
+            }
+            else if (strcmp(key, "specular_color") == 0){
+              double* value = next_vector(json);
+              memcpy(&scene[obj_num].specular_color, value, sizeof(double)*3);
             }
             else if (strcmp(key, "position") == 0){
               double* value = next_vector(json);
@@ -185,6 +197,34 @@ int read_scene(char* json_input, Scene scene){
               exit(1);
             }
           }
+          else if (scene[obj_num].kind == 4){
+            if (strcmp(key, "color") == 0){
+              double* value = next_vector(json);
+              memcpy(&scene[obj_num].light.color, value, sizeof(double)*3);
+            }
+            else if (strcmp(key, "position") == 0){
+              double* value = next_vector(json);
+              memcpy(&scene[obj_num].light.center, value, sizeof(double)*3);
+            }
+            else if (strcmp(key, "direction") == 0){
+              double* value = next_vector(json);
+              memcpy(&scene[obj_num].light.direction, value, sizeof(double)*3);
+            }
+            else if (strcmp(key, "theta") == 0)
+              scene[obj_num].light.theta = next_number(json);            
+            else if (strcmp(key, "radial-a2") == 0)
+              scene[obj_num].light.radial_a2 = next_number(json);
+            else if (strcmp(key, "radial-a1") == 0)
+              scene[obj_num].light.radial_a1 = next_number(json);
+            else if (strcmp(key, "radial-a0") == 0)
+              scene[obj_num].light.radial_a0 = next_number(json);
+            else if (strcmp(key, "angular-a0") == 0)
+              scene[obj_num].light.radial_a0 = next_number(json);                                                 
+            else{
+              fprintf(stderr, "Error: Unrecognized field \"%s\" for 'light'.\n.", key);
+              exit(1);
+            }
+          }          
         }
         skip_ws(json);
       }
@@ -219,8 +259,8 @@ int read_scene(char* json_input, Scene scene){
 
 // This method creates the viewplane and loops through each object checking for colisions for each ray
 // Each ray is then converted to a pixel on the screen and placed into a pixel array for PPM output.
-int raycast(int *buffer, Scene scene, int num_objects, int width, int height){
-
+int raycast(Pixel *buffer, Scene scene, int num_objects, int width, int height){
+  printf("raycast entered\n");
   //camera starts at 0, load in camera dimensions
   double cx = 0;
   double cy = 0;
@@ -233,9 +273,11 @@ int raycast(int *buffer, Scene scene, int num_objects, int width, int height){
 
   double pixheight = h / M;
   double pixwidth = w / N;
+  printf("M:%d N:%d h:%d w:%d pH:%lf pW:%lf", M, N, h, w, pixheight, pixwidth);
+
   int current_pixel = 0;
-  for (int y = 0; y < M; y += 1) {
-    for (int x = 0; x < N; x += 1) {
+  for (int y = 0; y < N; y += 1) {
+    for (int x = 0; x < M; x += 1) {
       double Ro[3] = { 0, 0, 0 };
       // Rd = normalize(P - Ro)
       double Rd[3] = {
@@ -243,7 +285,7 @@ int raycast(int *buffer, Scene scene, int num_objects, int width, int height){
         cy - (h / 2) + pixheight * (y + 0.5),
         1
       };
-      normalize(Rd);
+      v3_normalize(Rd);
 
       //initialize variables for closest colision, then loop over objects looking for colisions
       double best_t = INFINITY;
@@ -254,17 +296,16 @@ int raycast(int *buffer, Scene scene, int num_objects, int width, int height){
         //check object type and send to appropriate colision check
         switch (scene[i].kind) {
         case 1:
-          t = sphere_intersection(Ro, Rd,
-            scene[i].sphere.center,
-            scene[i].sphere.radius);
+          t = sphere_intersection(Ro, Rd, scene[i].sphere.center, scene[i].sphere.radius);
           break;
         case 2:
-        t = plane_intersection(Ro, Rd,
-          scene[i].plane.center,
-          scene[i].plane.normal);
-        break;
+          t = plane_intersection(Ro, Rd, scene[i].plane.center, scene[i].plane.normal);
+          break;
+        case 4:
+          //it's a light do nothing
+          break;
         default:
-          // Horrible error
+          fprintf(stderr, "Error: Unrecognized object in scene\n");
           exit(1);
         }
 
@@ -275,26 +316,136 @@ int raycast(int *buffer, Scene scene, int num_objects, int width, int height){
         }
       }
 
+
       //Initialize a pixel and convert the scene's 0.0-1.0 color to 0-255 color
       Pixel pix;
       if (best_t > 0 && best_t != INFINITY) {
-        pix.r = (int)floor(scene[best_obj].color[0]*255.0);
-        pix.b = (int)floor(scene[best_obj].color[1]*255.0);
-        pix.g = (int)floor(scene[best_obj].color[2]*255.0);
-        //printf("#");
+        double color[3];
+
+        color[0] = scene[best_obj].diffuse_color[0];
+        color[1] = scene[best_obj].diffuse_color[1];
+        color[2] = scene[best_obj].diffuse_color[2];
+        
+        //loop over lights adding lighting elements to the color
+        for (int i = 1; i < num_objects; i += 1) {
+          if(scene[i].kind != 4) 
+            continue;
+          double Ron[3];
+          double Rdn[3];
+          double Ron_temp[3];
+
+          //cast a ray from intersection to light, if there is no object in the way add specular color
+          v3_scale(Rd, best_t, Ron_temp);
+          v3_add(Ron_temp, Ro, Ron);
+          v3_sub(scene[i].light.center, Ron, Rdn);
+
+          double best_t_shadow = INFINITY;
+          double best_obj_shadow = 0;
+          for (int k=1; k < num_objects ; k += 1){
+            //carful, origin not at 0
+            if (k != best_obj){
+              double t_shadow = 0;
+              switch(scene[k].kind){
+              case 1:
+                t_shadow = sphere_intersection(Ron, Rdn, scene[k].sphere.center, scene[k].sphere.radius);
+                break;
+              case 2:
+                t_shadow = plane_intersection(Ron, Rdn, scene[k].plane.center, scene[k].plane.normal);
+                break;
+              case 4:
+                break;                
+              default:
+                fprintf(stderr, "Error: Unrecognized object in scene when looking for shadow\n");
+                exit(1);
+              }
+
+              if (t_shadow > 0 && t_shadow < best_t_shadow){
+                best_t_shadow = t_shadow;
+                best_obj_shadow = k;
+              }
+
+            }
+          }
+          // CAREFUL, THIS WILL SHADE OBJECTS ARE BEHIND THE LIGHT AS WELL
+          //int dL = 
+          if (best_t_shadow > 0 && best_t_shadow != INFINITY) {
+            //do nothing
+          }
+          else{
+            color[0] += 0.23;
+            color[1] += 0.23;
+            color[2] += 0.23;
+          /*            
+            // no object was in the way
+            // N, L, R, V
+            V3 N, L, R, V, Rd, R_temp;
+
+            if(scene[best_obj].kind == 2) N = scene[best_obj].plane.normal; // if plane
+            else v3_sub(Ron, scene[best_obj].sphere.center, N);
+            v3_normalize(N);
+
+            L = v3_sub(scene[i].light.position, Ron, L); //light_position - Ron;
+
+            //double Rd_N_dot = v3_dot(Rd, N);
+            //v3_scale
+            //r=d−2(d DOT n)n
+            R =   ;//reflection of L
+
+            memcpy(V, Rd, sizeof(double*3));
+
+            diffuse = scene[best_obj].diffuse_color; //uses object's diffuse color
+            specular = scene[best_obj].specular_color; //uses object's specular color
+
+            color[0] += frad() * fang() * (diffuse + specular);
+            color[1] += frad() * fang() * (diffuse + specular);
+            color[2] += frad() * fang() * (diffuse + specular);*/
+
+            /*
+              radial -> how light falls off as we get furthur away
+                1.0 if not spot
+                0.0 if vObj DOT Vlight = cosAlpha < cosTheta
+                (Vobj DOT Vlight)^(a0) otherwise
+
+                Assume theta is in Degrees
+                Vobj = (intersection - light position) normalized
+                Vlight = given in json as direction
+                Alpha andgle between object and light vector, theta is given in json
+              fang -> cone light
+                1.0 if distance = INFINITY //This won't show up, dont implement
+                1/(a2dL^2 + a1Dl + a0) (from json)
+                dL = position in json (Ro + tRd = intersecton) use distance formula
+
+              diffuse + specular = KdIl(NL) + KsIl(R DOT V)^n
+              Kd = diffuse object color
+              Ks = specular object color
+
+              IncidentLight
+                KdIl (N DOT L) if N DOT L > 0
+                0 otherwise
+
+                Il = comes from json
+
+
+            */
+          }
+        }
+
+        pix.r = (unsigned char)clamp(color[0]*255.0);
+        pix.g = (unsigned char)clamp(color[1]*255.0);
+        pix.b = (unsigned char)clamp(color[2]*255.0);
+
       }
       else {
-        pix.r = 0;
-        pix.b = 0;
-        pix.g = 0;
+        //eigengrau
+        pix.r = (unsigned char)clamp(0.086);
+        pix.g = (unsigned char)clamp(0.086);
+        pix.b = (unsigned char)clamp(0.114);
         //printf(".");
       }
 
       //load the pixel data into the pixel buffer
       //printf("\nPixel: %d %d %d\n", pix.r, pix.b, pix.g);
-      buffer[current_pixel++] = pix.r;
-      buffer[current_pixel++] = pix.b;
-      buffer[current_pixel++] = pix.g;
+      buffer[current_pixel++] = pix;
 
     }
   }
@@ -303,8 +454,8 @@ int raycast(int *buffer, Scene scene, int num_objects, int width, int height){
 }
 
 //This method takes an array of color values as integers and writes them to a PPM P3 file.
-int ppm_output(int *buffer, char *output_file_name, int size, int depth, int width, int height){
-
+int ppm_output(Pixel *buffer, char *output_file_name, int size, int depth, int width, int height){
+  printf("ppm_output entered\n");
   // Attempt to open outfile
   FILE *output_file;
   output_file = fopen(output_file_name, "w");
@@ -319,13 +470,14 @@ int ppm_output(int *buffer, char *output_file_name, int size, int depth, int wid
     //Write the PPM P3 header
     fprintf(output_file, "P3\n%d %d\n%d\n", width, height, depth);
     //Append pixel data onto the rest of the file
+      int current_pixel = 0;
       for (int i = 0; i<width; i++)
       {
         for (int j = 0; j<height; j++)
         {
-          fprintf(output_file, "%d ", buffer[i*width * 3 + 3 * j]);
-          fprintf(output_file, "%d ", buffer[i*width * 3 + 3 * j + 1]);
-          fprintf(output_file, "%d ", buffer[i*width * 3 + 3 * j + 2]);
+          fprintf(output_file, "%d ", buffer[current_pixel].r);
+          fprintf(output_file, "%d ", buffer[current_pixel].g);
+          fprintf(output_file, "%d ", buffer[current_pixel++].b);
         }
         // Add newline after each line
         fprintf(output_file, "\n");
@@ -442,21 +594,33 @@ double sphere_intersection(double* Ro, double* Rd, double* C, double r){
 }
 
 double plane_intersection(double* Ro, double* Rd, double* c, double *n){
-  normalize(n);
+  v3_normalize(n);
+  double d = v3_dot(n, Rd);
+  if (fabs(d) > 0.0001f)
+  {
+
+      double c_minus_Ro[3];
+      v3_sub(c, Ro, c_minus_Ro);
+      double t = v3_dot(c_minus_Ro, n)/d;//(center - ray.origin).dot(normal) / denom;
+
+      if (t >= 0) return t; // you might want to allow an epsilon here too
+  }
+  return -1;
+
+  /*
+
+  v3_normalize(n);
 
   double v[3];
   //subtract center of plane from Origin
-  v[0] = c[0] - Ro[0];
-  v[1] = c[1] - Ro[1];
-  v[2] = c[2] - Ro[2];
+  v3_sub(c, Ro, v);
 
   //apply the dot product to new vector and normal
-  double t = v[0]*n[0] + v[1]*n[1] + v[2]*n[2];
-
-  double d = n[0]*Rd[0] + n[1]*Rd[1] + n[2]*Rd[2];
+  double t = v3_dot(v, n);
+  double d = v3_dot(n, Rd);
 
   //check for ray miss else return t
-  if(fabs(d) < 0.0001f || t < 0) return -1;
-  return t;
+  if( t < 0) return -1;
+  return t;*/
 }
 
