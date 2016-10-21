@@ -120,3 +120,21 @@ static inline int clamp(double d){
   else final = floor(d);
   return final;
 }
+
+static inline double distance(V3 Ro, V3 p){
+  return sqrt(sqr(Ro[0] - p[0]) + sqr(Ro[1] - p[1]) + sqr(Ro[2] - p[2]));
+}
+
+static inline double frad(double a0, double a1, double a2, double dl){
+  return 1/(a2*sqr(dl) + a1*dl + a0);
+}
+
+static inline double fang(V3 Rd, V3 Ld, double a0, double theta){
+  if(theta == 0)
+    return 1;
+  double l_theta = v3_dot(Rd, Ld);
+  if (acos(l_theta) > theta)
+    return 0;
+  else
+    return pow(l_theta, a0);
+}
