@@ -276,6 +276,7 @@ int raycast(Pixel *buffer, Scene scene, int num_objects, int width, int height){
   printf("\nM:%d N:%d h:%d w:%d pH:%lf pW:%lf\n", M, N, h, w, pixheight, pixwidth);
 
   int current_pixel = 0;
+  int testpixel = 0;
   for (int y = 0; y < N; y += 1) {
     for (int x = 0; x < M; x += 1) {
       double Ro[3] = { 0, 0, 0 };
@@ -322,13 +323,10 @@ int raycast(Pixel *buffer, Scene scene, int num_objects, int width, int height){
       if (best_t > 0 && best_t != INFINITY) {
         double color[3];
 
+        //initialize color as black
         color[0] = 0;
         color[1] = 0;
         color[2] = 0;
-
-        //color[0] = scene[best_obj].diffuse_color[0];
-        //color[1] = scene[best_obj].diffuse_color[1];
-        //color[2] = scene[best_obj].diffuse_color[2];
         
         //loop over lights adding lighting elements to the color
         for (int i = 1; i < num_objects; i += 1) {
@@ -343,7 +341,12 @@ int raycast(Pixel *buffer, Scene scene, int num_objects, int width, int height){
           v3_add(Ron_temp, Ro, Ron);
           v3_sub(scene[i].light.center, Ron, Rdn);
 
-          double dist = distance(scene[i].light.center, Ron);
+          double B[3];
+          v3_sub(scene[i].light.center, Ron, B);
+          double dist = v3_mag(B);
+
+
+
           double best_t_shadow = INFINITY;
           double best_obj_shadow = 0;
           for (int k=1; k < num_objects ; k += 1){
@@ -372,13 +375,14 @@ int raycast(Pixel *buffer, Scene scene, int num_objects, int width, int height){
             }
           }
 
-          // CAREFUL, THIS WILL SHADE OBJECTS ARE BEHIND THE LIGHT AS WELL
+          //make sure to check that light obstruction is in front of the light
           if (best_t_shadow > 0 && best_t_shadow != INFINITY && best_t_shadow < dist ) {
-              printf("[ toshadow:%lf tolight:%1f ]", best_t_shadow, dist);
+            //Do nothing!
           }
           else{
             // no object was in the way
             // N, L, R, V
+            // Set up needed vectors
             double N[3], L[3], R[3], V[3];
 
             if(scene[best_obj].kind == 2)
@@ -390,8 +394,6 @@ int raycast(Pixel *buffer, Scene scene, int num_objects, int width, int height){
             v3_sub(scene[i].light.center, Ron, L);
             v3_normalize(L); //light_position - Ron;
 
-            //double Rd_N_dot = v3_dot(Rd, N);
-            //v3_scale
             //r=L−2(L DOT n)n
             double q = 2*v3_dot(L, N);
             double rscale[3];
@@ -402,9 +404,8 @@ int raycast(Pixel *buffer, Scene scene, int num_objects, int width, int height){
             memcpy(V, Rd, sizeof(double)*3);
             v3_scale(V, -1.0, V);
             v3_normalize(V);
-            //printf(" [%lf %lf %lf] ", R[0], R[1], R[2]);
 
-            //diffuse = scene[best_obj].diffuse_color; //uses object's diffuse color
+            //Populate the diffuse component
             double diff_nl = v3_dot(N, L);
             double diff[3];
               diff[0] = scene[best_obj].diffuse_color[0]*scene[i].light.color[0];
@@ -412,18 +413,13 @@ int raycast(Pixel *buffer, Scene scene, int num_objects, int width, int height){
               diff[2] = scene[best_obj].diffuse_color[2]*scene[i].light.color[2];
               v3_scale(diff, diff_nl, diff);  
 
-            //specular = scene[best_obj].specular_color; //uses object's specular color
+            //Populate the specular component
             double spec_vr = -1*v3_dot(V, R);
-            //printf("%lf ", spec_vr);
             double spec[3];
             if(spec_vr > 0){
               spec[0] = (scene[best_obj].specular_color[0]*scene[i].light.color[0]*pow(spec_vr, 20));
               spec[1] = (scene[best_obj].specular_color[1]*scene[i].light.color[1]*pow(spec_vr, 20));
               spec[2] = (scene[best_obj].specular_color[2]*scene[i].light.color[2]*pow(spec_vr, 20));
-              //v3_scale(spec, pow(spec_vr, 100), spec);
-              //v3_scale(spec, 0.0001, spec);
-              //printf(" [%lf %lf %lf] ", spec[0], spec[1], spec[2]);
-              //printf(" %lf ", spec_vr);
             }
             else {
               spec[0] = 0;
@@ -431,43 +427,21 @@ int raycast(Pixel *buffer, Scene scene, int num_objects, int width, int height){
               spec[2] = 0;
             }
 
+            //account for angular and radial attinuation and add diffuse + specular to finish color processing
             double rad_a = frad(scene[i].light.radial_a0, scene[i].light.radial_a1, scene[i].light.radial_a2, dist);
-            double ang_a = 1; // expand later
+            double ang_a;
+              if(scene[i].light.theta != 0){
+                ang_a = fang(Rd, scene[i].light.direction, scene[i].light.theta * M_PI / 180.0, scene[i].light.angular_a0);
+              }
+              else
+                ang_a = 1;
             color[0] += rad_a * ang_a * (diff[0] + spec[0]);
             color[1] += rad_a * ang_a * (diff[1] + spec[1]); //*fang * frad
             color[2] += rad_a * ang_a * (diff[2] + spec[2]);
-
-            /*
-              fang -> cone light
-                1.0 if not spot
-                0.0 if vObj DOT Vlight = cosAlpha < cosTheta
-                (Vobj DOT Vlight)^(a0) otherwise
-
-                Assume theta is in Degrees
-                Vobj = (intersection - light position) normalized
-                Vlight = given in json as direction
-                Alpha andgle between object and light vector, theta is given in json
-              frad -> how light falls off as we get furthur away
-                1.0 if distance = INFINITY //This won't show up, dont implement
-                1/(a2dL^2 + a1Dl + a0) (from json)
-
-                dL = position in json (Ro + tRd = intersecton) use distance formula
-
-              diffuse + specular = KdIl(NL) + KsIl(R DOT V)^n
-              Kd = diffuse object color
-              Ks = specular object color
-
-              IncidentLight
-                KdIl (N DOT L) if N DOT L > 0
-                0 otherwise
-
-                Il = comes from json
-
-
-            */
           }
         }
 
+        //Assign and clamp color values
         pix.r = (unsigned char)clamp(color[0]*255.0);
         pix.g = (unsigned char)clamp(color[1]*255.0);
         pix.b = (unsigned char)clamp(color[2]*255.0);
@@ -482,7 +456,6 @@ int raycast(Pixel *buffer, Scene scene, int num_objects, int width, int height){
       }
 
       //load the pixel data into the pixel buffer
-      //printf("\nPixel: %d %d %d\n", pix.r, pix.b, pix.g);
       buffer[current_pixel++] = pix;
 
     }
@@ -632,15 +605,14 @@ double sphere_intersection(double* Ro, double* Rd, double* C, double r){
 
 double plane_intersection(double* Ro, double* Rd, double* c, double *n){
   v3_normalize(n);
-  double d = v3_dot(n, Rd);
-  if (fabs(d) > 0.0001f)
-  {
+  v3_normalize(Rd);
+  double d = -(v3_dot(c, n));
+  double e = v3_dot(Ro, n);
+  double f = v3_dot(Rd, n);
 
-      double c_minus_Ro[3];
-      v3_sub(c, Ro, c_minus_Ro);
-      double t = v3_dot(c_minus_Ro, n)/d;//(center - ro) dot (normal) / d;
-
-      if (t >= 0) return t;
+  double t = -(e + d)/f;
+  if (t > 0){
+    return t;
   }
   return -1;
 }

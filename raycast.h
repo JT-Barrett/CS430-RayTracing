@@ -4,6 +4,10 @@
 #define MAX_DEPTH 255
 #define EXPECTED_ARGS 5
 
+
+//MACROS
+#define degrees_to_rad(degrees) (degrees * M_PI / 180.0)
+
 //Needed Structs and Types
 
 typedef struct Object{
@@ -113,6 +117,11 @@ static inline void v3_normalize(double* v) {
   v[2] /= len;
 }
 
+static inline double v3_mag(double* v){
+  double d = (double)sqrt(sqr(v[0]) + sqr(v[1]) + sqr(v[2]));
+  return d;
+}
+
 static inline int clamp(double d){
   int final;
   if (d > 255.0) final = 255;
@@ -129,12 +138,20 @@ static inline double frad(double a0, double a1, double a2, double dl){
   return 1/(a2*sqr(dl) + a1*dl + a0);
 }
 
-static inline double fang(V3 Rd, V3 Ld, double a0, double theta){
+static inline double fang(V3 Rd, V3 Ld, double theta, double a0){
+  v3_normalize(Rd);
+  v3_normalize(Ld);
   if(theta == 0)
     return 1;
   double l_theta = v3_dot(Rd, Ld);
   if (acos(l_theta) > theta)
     return 0;
-  else
+  else{
     return pow(l_theta, a0);
+  }
+}
+
+static inline double deg_to_rad(double deg){
+  double d = deg * M_PI / 180.0;
+  return d;
 }
